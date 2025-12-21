@@ -98,6 +98,9 @@ try:
     # Try to use the model - try multiple options
     model_loaded = False
     model_names_to_try = [
+        'models/gemini-2.5-flash',
+        'models/gemini-flash-latest',
+        'models/gemini-2.0-flash',
         'gemini-1.5-flash',
         'gemini-pro',
         'gemini-1.0-pro'
