@@ -51,11 +51,10 @@ try:
     # Try to use the model - try multiple options
     model_loaded = False
     model_names_to_try = [
-        'models/gemini-2.5-flash',
-        'models/gemini-flash-latest',
+        'models/gemini-flash-latest',  # Better rate limits
         'models/gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-pro'
+        'models/gemini-pro-latest',
+        'models/gemini-2.5-flash'
     ]
     
     for model_name in model_names_to_try:
@@ -221,10 +220,12 @@ def analyze_relevance(title, content):
     
     try:
         response = st.session_state.model.generate_content(prompt)
+        time.sleep(3)  # Rate limiting: 3 seconds between calls
         score_text = response.text.strip()
         score = int(''.join(filter(str.isdigit, score_text)))
         return min(max(score, 1), 10)  # Ensure between 1-10
-    except:
+    except Exception as e:
+        time.sleep(3)
         return 5  # Default middle score if analysis fails
 
 def generate_summary(title, content):
@@ -245,8 +246,10 @@ def generate_summary(title, content):
     
     try:
         response = st.session_state.model.generate_content(prompt)
+        time.sleep(3)  # Rate limiting: 3 seconds between calls
         return response.text.strip()
     except Exception as e:
+        time.sleep(3)
         return f"Summary generation failed: {str(e)}"
 
 def generate_mcq(title, content):
@@ -272,8 +275,10 @@ def generate_mcq(title, content):
     
     try:
         response = st.session_state.model.generate_content(prompt)
+        time.sleep(3)  # Rate limiting: 3 seconds between calls
         return response.text.strip()
     except Exception as e:
+        time.sleep(3)
         return f"MCQ generation failed: {str(e)}"
 
 def process_articles_with_ai(articles):
@@ -284,31 +289,28 @@ def process_articles_with_ai(articles):
     status_text = st.empty()
     
     status_text.text("🤖 AI analyzing article relevance...")
+    st.info("⏱️ This will take ~3 minutes due to API rate limits (5 requests/min). Please be patient!")
     
     for idx, article in enumerate(articles):
         article['relevance_score'] = analyze_relevance(article['title'], article['content'])
         progress_bar.progress((idx + 1) / len(articles) * 0.3)  # 30% for analysis
-        time.sleep(0.5)
     
     # Step 2: Sort by relevance and keep top articles
     articles_sorted = sorted(articles, key=lambda x: x['relevance_score'], reverse=True)
-    top_articles = articles_sorted[:10]  # Keep top 10
+    top_articles = articles_sorted[:5]  # REDUCED to 5 articles to avoid rate limits
     
-    status_text.text(f"✅ Selected top {len(top_articles)} most relevant articles")
-    time.sleep(1)
+    status_text.text(f"✅ Selected top {len(top_articles)} most relevant articles (processing with delays for rate limits)")
+    time.sleep(2)
     
     # Step 3: Generate summaries and MCQs
     processed = []
     
     for idx, article in enumerate(top_articles):
-        status_text.text(f"Processing article {idx+1}/{len(top_articles)}: {article['title'][:50]}...")
+        status_text.text(f"Processing article {idx+1}/{len(top_articles)}: {article['title'][:50]}... (⏱️ ~20 sec per article)")
         
         try:
             summary = generate_summary(article['title'], article['content'])
-            time.sleep(1)
-            
             mcq = generate_mcq(article['title'], article['content'])
-            time.sleep(1)
             
             processed.append({
                 'Date': article['date'],
