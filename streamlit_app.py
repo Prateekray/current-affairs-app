@@ -1,8 +1,42 @@
-import streamlit as st
-import feedparser
-import pandas as pd
-from datetime import datetime
-import google.generativeai as genai
+# Debug imports - this will show which package fails
+import sys
+
+try:
+    import streamlit as st
+    st.success("✅ Streamlit loaded")
+except ImportError as e:
+    print(f"❌ Streamlit failed: {e}")
+    sys.exit(1)
+
+try:
+    import feedparser
+    st.success("✅ Feedparser loaded")
+except ImportError as e:
+    st.error(f"❌ Feedparser failed: {e}")
+    st.stop()
+
+try:
+    import pandas as pd
+    st.success("✅ Pandas loaded")
+except ImportError as e:
+    st.error(f"❌ Pandas failed: {e}")
+    st.stop()
+
+try:
+    from datetime import datetime
+    st.success("✅ Datetime loaded")
+except ImportError as e:
+    st.error(f"❌ Datetime failed: {e}")
+    st.stop()
+
+try:
+    import google.generativeai as genai
+    st.success("✅ Google Generative AI loaded")
+except ImportError as e:
+    st.error(f"❌ Google Generative AI failed: {e}")
+    st.info("💡 Try: pip install google-generativeai")
+    st.stop()
+
 import time
 import json
 
@@ -39,7 +73,7 @@ check_setup()
 # Configure Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
     st.stop()
