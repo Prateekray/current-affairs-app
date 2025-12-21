@@ -40,7 +40,7 @@ def check_setup():
 
 check_setup()
 
-# Configure Gemini
+# Configure Gemini - HYBRID APPROACH
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
@@ -48,29 +48,43 @@ try:
     api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
     st.sidebar.info(f"🔑 Gemini Key: {api_key_preview}")
     
-    # Try to use the model - try multiple options
-    model_loaded = False
-    model_names_to_try = [
-        'models/gemini-flash-latest',  # Better rate limits
-        'models/gemini-2.0-flash',
-        'models/gemini-pro-latest',
-        'models/gemini-2.5-flash'
-    ]
+    # PRIMARY MODEL: gemini-1.5-flash (for bulk processing)
+    # High quota: 1,500 requests/day - perfect for article processing
+    primary_model_loaded = False
+    primary_model_names = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
     
-    for model_name in model_names_to_try:
+    for model_name in primary_model_names:
         try:
-            model = genai.GenerativeModel(model_name)
-            # Store in session state so functions can access it
-            st.session_state.model = model
-            st.sidebar.success(f"✅ Using: {model_name.split('/')[-1]}")
-            model_loaded = True
+            primary_model = genai.GenerativeModel(model_name)
+            st.session_state.primary_model = primary_model
+            st.sidebar.success(f"✅ Primary (Bulk): {model_name}")
+            primary_model_loaded = True
             break
-        except Exception as model_error:
+        except:
             continue
     
-    if not model_loaded:
-        st.error("❌ Could not load any Gemini model!")
+    if not primary_model_loaded:
+        st.error("❌ Could not load primary model!")
         st.stop()
+    
+    # PREMIUM MODEL: gemini-2.5-flash (for special queries)
+    # Lower quota: 20 requests/day - saved for "Ask the AI" feature
+    premium_model_loaded = False
+    premium_model_names = ['models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'gemini-pro']
+    
+    for model_name in premium_model_names:
+        try:
+            premium_model = genai.GenerativeModel(model_name)
+            st.session_state.premium_model = premium_model
+            st.sidebar.success(f"🌟 Premium (Chat): {model_name.split('/')[-1]}")
+            premium_model_loaded = True
+            break
+        except:
+            continue
+    
+    if not premium_model_loaded:
+        st.sidebar.warning("⚠️ Premium model not available, using primary for chat too")
+        st.session_state.premium_model = st.session_state.primary_model
     
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
@@ -229,7 +243,7 @@ def analyze_relevance(title, content):
         return 5  # Default middle score if analysis fails
 
 def generate_summary(title, content):
-    """Generate UPSC-focused summary using Gemini"""
+    """Generate UPSC-focused summary using Gemini - Uses PRIMARY model"""
     prompt = f"""
     You are an expert tutor for Indian competitive exams (UPSC/SSC).
     
@@ -245,7 +259,7 @@ def generate_summary(title, content):
     """
     
     try:
-        response = st.session_state.model.generate_content(prompt)
+        response = st.session_state.primary_model.generate_content(prompt)
         time.sleep(3)  # Rate limiting: 3 seconds between calls
         return response.text.strip()
     except Exception as e:
@@ -253,7 +267,7 @@ def generate_summary(title, content):
         return f"Summary generation failed: {str(e)}"
 
 def generate_mcq(title, content):
-    """Generate MCQ question using Gemini"""
+    """Generate MCQ question using Gemini - Uses PRIMARY model"""
     prompt = f"""
     You are an expert MCQ creator for UPSC/SSC exams.
     
@@ -274,7 +288,7 @@ def generate_mcq(title, content):
     """
     
     try:
-        response = st.session_state.model.generate_content(prompt)
+        response = st.session_state.primary_model.generate_content(prompt)
         time.sleep(3)  # Rate limiting: 3 seconds between calls
         return response.text.strip()
     except Exception as e:
@@ -600,7 +614,7 @@ def main():
             )
             
             if user_question:
-                with st.spinner("Thinking..."):
+                with st.spinner("Thinking... (Using premium Gemini 2.5-flash model)"):
                     prompt = f"""
                     You are an expert UPSC/SSC tutor. Based on today's news articles, answer this question:
                     
@@ -613,11 +627,14 @@ def main():
                     """
                     
                     try:
-                        response = st.session_state.model.generate_content(prompt)
+                        # Use PREMIUM model for personalized questions
+                        response = st.session_state.premium_model.generate_content(prompt)
                         st.markdown("### 🤖 Answer:")
                         st.markdown(response.text)
+                        st.info("✨ Powered by Gemini 2.5-flash (Premium)")
                     except Exception as e:
                         st.error(f"Could not generate answer: {e}")
+                        st.info("💡 Tip: You have 20 premium queries per day. Try again in a few minutes if you hit the limit.")
 
 # ============================================
 # 🚀 RUN THE APP
