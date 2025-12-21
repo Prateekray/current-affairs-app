@@ -74,12 +74,58 @@ check_setup()
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # Use the correct model name for the stable API
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Show API key format (first 10 chars only for security)
+    api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
+    st.sidebar.info(f"🔑 API Key: {api_key_preview}")
+    
+    # List all available models
+    st.sidebar.markdown("### 📋 Available Models:")
+    try:
+        models_list = list(genai.list_models())
+        if not models_list:
+            st.sidebar.error("⚠️ No models found! Your API key might be invalid.")
+        else:
+            available_model_names = []
+            for m in models_list:
+                if 'generateContent' in m.supported_generation_methods:
+                    st.sidebar.text(f"✓ {m.name}")
+                    available_model_names.append(m.name)
+    except Exception as list_error:
+        st.sidebar.error(f"❌ Cannot list models: {list_error}")
+        st.sidebar.info("This usually means your API key is from Google Cloud Console instead of Google AI Studio.")
+        available_model_names = []
+    
+    # Try to use the model - try multiple options
+    model_loaded = False
+    model_names_to_try = [
+        'gemini-1.5-flash',
+        'gemini-pro',
+        'gemini-1.0-pro'
+    ]
+    
+    for model_name in model_names_to_try:
+        try:
+            model = genai.GenerativeModel(model_name)
+            # Store in session state so functions can access it
+            st.session_state.model = model
+            st.sidebar.success(f"✅ Using model: {model_name}")
+            model_loaded = True
+            break
+        except Exception as model_error:
+            st.sidebar.warning(f"⚠️ {model_name} failed: {str(model_error)[:50]}")
+            continue
+    
+    if not model_loaded:
+        st.error("❌ Could not load any Gemini model!")
+        st.info("**Solution:** Get a valid API key from: https://aistudio.google.com/app/apikey")
+        if available_model_names:
+            st.info(f"Available models found: {', '.join(available_model_names)}")
+        st.stop()
     
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
     st.info("💡 Make sure your GEMINI_API_KEY is set correctly in Streamlit secrets")
+    st.info("Get your key from: https://aistudio.google.com/app/apikey")
     st.stop()
 
 # RSS Feed URLs
@@ -161,10 +207,11 @@ def generate_summary(title, content):
     """
     
     try:
-        response = model.generate_content(prompt)
+        # Use the global model instance
+        response = st.session_state.model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"Summary generation failed: {e}"
+        return f"Summary generation failed: {str(e)}"
 
 def generate_mcq(title, content):
     """Generate MCQ question using Gemini"""
@@ -188,10 +235,11 @@ def generate_mcq(title, content):
     """
     
     try:
-        response = model.generate_content(prompt)
+        # Use the global model instance
+        response = st.session_state.model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"MCQ generation failed: {e}"
+        return f"MCQ generation failed: {str(e)}"
 
 # ============================================
 # 📡 NEWS FETCHING FUNCTIONS
@@ -418,7 +466,7 @@ def main():
                     """
                     
                     try:
-                        response = model.generate_content(prompt)
+                        response = st.session_state.model.generate_content(prompt)
                         st.markdown("### 🤖 Answer:")
                         st.markdown(response.text)
                     except Exception as e:
