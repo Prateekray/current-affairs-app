@@ -73,9 +73,13 @@ check_setup()
 # Configure Gemini
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    
+    # Use the correct model name for the stable API
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
+    st.info("💡 Make sure your GEMINI_API_KEY is set correctly in Streamlit secrets")
     st.stop()
 
 # RSS Feed URLs
