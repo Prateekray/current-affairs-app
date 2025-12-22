@@ -42,7 +42,7 @@ def check_setup():
 check_setup()
 
 # ============================================
-# 🔧 ROBUST GEMINI CONFIGURATION (Auto-Detect)
+# 🔧 ROBUST GEMINI CONFIGURATION (Auto-List Strategy)
 # ============================================
 
 try:
@@ -51,58 +51,51 @@ try:
     # Show API key preview
     api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
     st.sidebar.info(f"🔑 Gemini Key: {api_key_preview}")
-    
-    # Function to find a working model
-    def find_working_model(model_candidates, role_name):
-        st.sidebar.markdown(f"**🔍 Testing models for {role_name}...**")
-        for model_name in model_candidates:
-            try:
-                # 1. Initialize
-                model = genai.GenerativeModel(model_name)
-                
-                # 2. TEST connection (This is the critical step you were missing)
-                response = model.generate_content("Test", request_options={'timeout': 5})
-                if response:
-                    st.sidebar.success(f"✅ {role_name}: {model_name} (Connected)")
-                    return model
-            except Exception as e:
-                # Silently fail and try the next one
-                continue
-        
-        st.sidebar.error(f"❌ No working model found for {role_name}")
-        return None
 
-    # 1. Setup PRIMARY Model (Bulk/Fast)
-    # We try generic names first, they are usually safer than specific versions like -002
-    primary_candidates = [
-        "gemini-1.5-flash",          # Most common stable alias
-        "gemini-1.5-flash-latest",   # Rolling update
-        "gemini-1.5-pro",            # Fallback to Pro if Flash fails
-        "gemini-pro",                # Old faithful 1.0 Pro
-        "gemini-1.0-pro"             # Explicit 1.0
-    ]
-    
-    st.session_state.primary_model = find_working_model(primary_candidates, "Primary (Bulk)")
-    
-    if not st.session_state.primary_model:
-        st.error("CRITICAL: Could not find ANY working Gemini model. Check your API Key permissions.")
+    # 1. Get ALL available models for your key
+    st.sidebar.text("🔄 Fetching available models...")
+    available_models = []
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+    except Exception as e:
+        st.error(f"❌ Error listing models: {e}")
         st.stop()
 
-    # 2. Setup PREMIUM Model (Chat/Smart)
-    # Try the newest, smartest models first
-    premium_candidates = [
-        "gemini-2.0-flash-exp",      # Bleeding edge
-        "gemini-1.5-pro",            # Standard high-intelligence
-        "gemini-1.5-pro-latest",
-        "gemini-1.5-flash"           # Fallback to Flash if Pro fails
-    ]
+    # Debug: Show found models in sidebar (collapsed)
+    with st.sidebar.expander("Show Available Models"):
+        st.write(available_models)
+
+    if not available_models:
+        st.error("❌ Your API Key is valid, but has NO access to any text generation models. Check Google AI Studio settings.")
+        st.stop()
+
+    # 2. Smart Selection Logic
+    # We look for keywords in the available list to pick the best tool for the job
     
-    st.session_state.premium_model = find_working_model(premium_candidates, "Premium (Chat)")
+    def select_best_model(available_list, preferred_keywords):
+        # Sort to get the "latest" versions often usually at the bottom or top, 
+        # but we scan for keywords.
+        for keyword in preferred_keywords:
+            for model in available_list:
+                if keyword in model:
+                    return model
+        return available_list[0] # Fallback to the first available one
+
+    # SELECT PRIMARY (Bulk - Prefer Flash)
+    primary_preferences = ["1.5-flash", "flash", "gemini-pro", "1.0-pro"]
+    primary_name = select_best_model(available_models, primary_preferences)
     
-    # Fallback: If premium fails, just use the primary model
-    if not st.session_state.premium_model:
-        st.sidebar.warning("⚠️ Premium model failed. Using Primary for everything.")
-        st.session_state.premium_model = st.session_state.primary_model
+    st.session_state.primary_model = genai.GenerativeModel(primary_name)
+    st.sidebar.success(f"✅ Primary: {primary_name.replace('models/', '')}")
+
+    # SELECT PREMIUM (Chat - Prefer Pro/Newer)
+    premium_preferences = ["2.0-flash", "1.5-pro", "gemini-1.5-flash"]
+    premium_name = select_best_model(available_models, premium_preferences)
+    
+    st.session_state.premium_model = genai.GenerativeModel(premium_name)
+    st.sidebar.success(f"🌟 Premium: {premium_name.replace('models/', '')}")
 
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
