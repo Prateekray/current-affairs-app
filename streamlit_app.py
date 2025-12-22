@@ -6,6 +6,7 @@ import google.generativeai as genai
 import time
 import json
 import requests
+import re
 
 # ============================================
 # 🔧 CONFIGURATION & SETUP
@@ -48,14 +49,13 @@ try:
     api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
     st.sidebar.info(f"🔑 Gemini Key: {api_key_preview}")
     
-    # PRIMARY MODEL: gemini-1.5-flash (for bulk processing)
-    # High quota: 1,500 requests/day - perfect for article processing
+    # PRIMARY MODEL: Updated to specific version to fix 404 errors
     primary_model_loaded = False
     primary_model_names = [
-        'models/gemini-1.5-flash',
-        'models/gemini-1.5-flash-latest', 
-        'models/gemini-flash-latest',
-        'gemini-1.5-flash',
+        'gemini-1.5-flash-002',    # Stable version (Recommended)
+        'gemini-1.5-flash-latest', 
+        'gemini-1.5-flash',        # Generic alias
+        'models/gemini-1.5-flash-002',
         'gemini-pro'
     ]
     
@@ -70,19 +70,18 @@ try:
             continue
     
     if not primary_model_loaded:
-        st.error("❌ Could not load primary model!")
+        st.error("❌ Could not load primary model! Please check API Key.")
         st.stop()
     
     # PREMIUM MODEL: gemini-2.5-flash (for special queries)
-    # Lower quota: 20 requests/day - saved for "Ask the AI" feature
     premium_model_loaded = False
-    premium_model_names = ['models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'gemini-pro']
+    premium_model_names = ['gemini-2.0-flash-exp', 'gemini-1.5-pro-002', 'gemini-pro']
     
     for model_name in premium_model_names:
         try:
             premium_model = genai.GenerativeModel(model_name)
             st.session_state.premium_model = premium_model
-            st.sidebar.success(f"🌟 Premium (Chat): {model_name.split('/')[-1]}")
+            st.sidebar.success(f"🌟 Premium (Chat): {model_name}")
             premium_model_loaded = True
             break
         except:
@@ -254,13 +253,13 @@ def analyze_relevance(title, content):
     """
     
     try:
-        response = st.session_state.model.generate_content(prompt)
-        time.sleep(3)  # Rate limiting: 3 seconds between calls
+        response = st.session_state.primary_model.generate_content(prompt)
+        time.sleep(2)  # Rate limiting
         score_text = response.text.strip()
         score = int(''.join(filter(str.isdigit, score_text)))
         return min(max(score, 1), 10)  # Ensure between 1-10
     except Exception as e:
-        time.sleep(3)
+        time.sleep(1)
         return 5  # Default middle score if analysis fails
 
 def generate_summary(title, content):
@@ -281,40 +280,46 @@ def generate_summary(title, content):
     
     try:
         response = st.session_state.primary_model.generate_content(prompt)
-        time.sleep(3)  # Rate limiting: 3 seconds between calls
+        time.sleep(2)  # Rate limiting
         return response.text.strip()
     except Exception as e:
-        time.sleep(3)
+        time.sleep(2)
         return f"Summary generation failed: {str(e)}"
 
 def generate_mcq(title, content):
-    """Generate MCQ question using Gemini - Uses PRIMARY model"""
+    """Generate MCQ question using Gemini - Uses PRIMARY model - RETURNS JSON"""
+    # Force JSON output to fix parsing errors
     prompt = f"""
     You are an expert MCQ creator for UPSC/SSC exams.
     
     Article Title: {title}
     Article Content: {content[:1000]}
     
-    Create ONE multiple-choice question in this EXACT format:
+    Create ONE multiple-choice question.
+    RETURN ONLY RAW JSON. Do not use Markdown. Do not say "Here is the JSON".
     
-    Q: [Question text]
-    A) [Option A]
-    B) [Option B]
-    C) [Option C]
-    D) [Option D]
-    CORRECT: [A/B/C/D]
-    EXPLANATION: [1-2 line explanation]
-    
-    Make it moderately challenging and exam-relevant.
+    Structure:
+    {{
+        "question": "The question text here?",
+        "options": {{
+            "A": "Option A text",
+            "B": "Option B text",
+            "C": "Option C text",
+            "D": "Option D text"
+        }},
+        "correct": "A",
+        "explanation": "Explanation here"
+    }}
     """
     
     try:
+        # Requesting JSON response via prompt engineering
         response = st.session_state.primary_model.generate_content(prompt)
-        time.sleep(3)  # Rate limiting: 3 seconds between calls
+        time.sleep(2)  # Rate limiting
         return response.text.strip()
     except Exception as e:
-        time.sleep(3)
-        return f"MCQ generation failed: {str(e)}"
+        time.sleep(2)
+        return json.dumps({"error": str(e)})
 
 def process_articles_with_ai(articles):
     """Process articles with AI: filter by relevance, generate summaries and MCQs"""
@@ -374,34 +379,41 @@ def process_articles_with_ai(articles):
 # ============================================
 
 def parse_mcq(mcq_text):
-    """Parse MCQ text into structured format"""
+    """Parse JSON MCQ text into structured format"""
     try:
-        lines = mcq_text.strip().split('\n')
-        question = ""
-        options = {}
-        correct = ""
-        explanation = ""
+        # Clean potential markdown from AI response
+        cleaned_text = mcq_text.replace("```json", "").replace("```", "").strip()
         
-        for line in lines:
-            line = line.strip()
-            if line.startswith('Q:'):
-                question = line[2:].strip()
-            elif line.startswith('A)'):
-                options['A'] = line[2:].strip()
-            elif line.startswith('B)'):
-                options['B'] = line[2:].strip()
-            elif line.startswith('C)'):
-                options['C'] = line[2:].strip()
-            elif line.startswith('D)'):
-                options['D'] = line[2:].strip()
-            elif 'CORRECT:' in line:
-                correct = line.split('CORRECT:')[1].strip()[0]
-            elif 'EXPLANATION:' in line or 'Explanation:' in line:
-                explanation = line.split(':')[1].strip()
+        data = json.loads(cleaned_text)
+        
+        question = data.get('question', 'No question')
+        options = data.get('options', {})
+        correct = data.get('correct', 'A')
+        explanation = data.get('explanation', 'No explanation')
         
         return question, options, correct, explanation
-    except:
-        return None, None, None, None
+    except Exception as e:
+        # Fallback for old text format if loaded from history
+        try:
+            lines = mcq_text.strip().split('\n')
+            question = ""
+            options = {}
+            correct = ""
+            explanation = ""
+            for line in lines:
+                if line.startswith('Q:'): question = line[2:].strip()
+                elif line.startswith('A)'): options['A'] = line[2:].strip()
+                elif line.startswith('B)'): options['B'] = line[2:].strip()
+                elif line.startswith('C)'): options['C'] = line[2:].strip()
+                elif line.startswith('D)'): options['D'] = line[2:].strip()
+                elif 'CORRECT:' in line: correct = line.split('CORRECT:')[1].strip()[0]
+                elif 'EXPLANATION:' in line: explanation = line.split(':')[1].strip()
+            
+            if question and options:
+                return question, options, correct, explanation
+            return None, None, None, None
+        except:
+            return None, None, None, None
 
 def display_interactive_mcq(mcq_text, article_index):
     """Display interactive MCQ with buttons and feedback"""
