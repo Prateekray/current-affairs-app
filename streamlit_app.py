@@ -41,56 +41,69 @@ def check_setup():
 
 check_setup()
 
-# Configure Gemini - HYBRID APPROACH
+# ============================================
+# 🔧 ROBUST GEMINI CONFIGURATION (Auto-Detect)
+# ============================================
+
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # Show API key format (first 10 chars only for security)
+    # Show API key preview
     api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
     st.sidebar.info(f"🔑 Gemini Key: {api_key_preview}")
     
-    # PRIMARY MODEL: Updated to specific version to fix 404 errors
-    primary_model_loaded = False
-    primary_model_names = [
-        'gemini-1.5-flash-002',    # Stable version (Recommended)
-        'gemini-1.5-flash-latest', 
-        'gemini-1.5-flash',        # Generic alias
-        'models/gemini-1.5-flash-002',
-        'gemini-pro'
+    # Function to find a working model
+    def find_working_model(model_candidates, role_name):
+        st.sidebar.markdown(f"**🔍 Testing models for {role_name}...**")
+        for model_name in model_candidates:
+            try:
+                # 1. Initialize
+                model = genai.GenerativeModel(model_name)
+                
+                # 2. TEST connection (This is the critical step you were missing)
+                response = model.generate_content("Test", request_options={'timeout': 5})
+                if response:
+                    st.sidebar.success(f"✅ {role_name}: {model_name} (Connected)")
+                    return model
+            except Exception as e:
+                # Silently fail and try the next one
+                continue
+        
+        st.sidebar.error(f"❌ No working model found for {role_name}")
+        return None
+
+    # 1. Setup PRIMARY Model (Bulk/Fast)
+    # We try generic names first, they are usually safer than specific versions like -002
+    primary_candidates = [
+        "gemini-1.5-flash",          # Most common stable alias
+        "gemini-1.5-flash-latest",   # Rolling update
+        "gemini-1.5-pro",            # Fallback to Pro if Flash fails
+        "gemini-pro",                # Old faithful 1.0 Pro
+        "gemini-1.0-pro"             # Explicit 1.0
     ]
     
-    for model_name in primary_model_names:
-        try:
-            primary_model = genai.GenerativeModel(model_name)
-            st.session_state.primary_model = primary_model
-            st.sidebar.success(f"✅ Primary (Bulk): {model_name}")
-            primary_model_loaded = True
-            break
-        except:
-            continue
+    st.session_state.primary_model = find_working_model(primary_candidates, "Primary (Bulk)")
     
-    if not primary_model_loaded:
-        st.error("❌ Could not load primary model! Please check API Key.")
+    if not st.session_state.primary_model:
+        st.error("CRITICAL: Could not find ANY working Gemini model. Check your API Key permissions.")
         st.stop()
+
+    # 2. Setup PREMIUM Model (Chat/Smart)
+    # Try the newest, smartest models first
+    premium_candidates = [
+        "gemini-2.0-flash-exp",      # Bleeding edge
+        "gemini-1.5-pro",            # Standard high-intelligence
+        "gemini-1.5-pro-latest",
+        "gemini-1.5-flash"           # Fallback to Flash if Pro fails
+    ]
     
-    # PREMIUM MODEL: gemini-2.5-flash (for special queries)
-    premium_model_loaded = False
-    premium_model_names = ['gemini-2.0-flash-exp', 'gemini-1.5-pro-002', 'gemini-pro']
+    st.session_state.premium_model = find_working_model(premium_candidates, "Premium (Chat)")
     
-    for model_name in premium_model_names:
-        try:
-            premium_model = genai.GenerativeModel(model_name)
-            st.session_state.premium_model = premium_model
-            st.sidebar.success(f"🌟 Premium (Chat): {model_name}")
-            premium_model_loaded = True
-            break
-        except:
-            continue
-    
-    if not premium_model_loaded:
-        st.sidebar.warning("⚠️ Premium model not available, using primary for chat too")
+    # Fallback: If premium fails, just use the primary model
+    if not st.session_state.premium_model:
+        st.sidebar.warning("⚠️ Premium model failed. Using Primary for everything.")
         st.session_state.premium_model = st.session_state.primary_model
-    
+
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
     st.stop()
