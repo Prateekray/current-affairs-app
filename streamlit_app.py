@@ -164,26 +164,41 @@ def fetch_newsdata_articles():
         if response.status_code == 200:
             data = response.json()
             
-            if data['status'] == 'success':
+            # Check if API returned success
+            if data.get('status') == 'success' and 'results' in data:
                 articles = []
                 for article in data.get('results', []):
+                    # Get description or content, ensure it's not None
+                    description = article.get('description') or article.get('content') or ''
+                    content = description[:800] if description else 'No content available'
+                    
                     articles.append({
                         'date': datetime.now().strftime('%Y-%m-%d'),
                         'title': article.get('title', 'No title'),
-                        'source': article.get('source_id', 'Unknown').title(),
+                        'source': (article.get('source_id') or 'Unknown').title(),
                         'link': article.get('link', ''),
-                        'content': article.get('description', '')[:800] or article.get('content', '')[:800]
+                        'content': content
                     })
-                return articles
+                
+                if articles:
+                    return articles
+                else:
+                    st.warning("No articles found in NewsData.io response")
+                    return []
             else:
-                st.error(f"NewsData API error: {data.get('results', {}).get('message', 'Unknown error')}")
+                # Handle API errors
+                error_msg = data.get('results', {}).get('message') if isinstance(data.get('results'), dict) else 'Unknown error'
+                st.error(f"NewsData API error: {error_msg}")
+                st.info("💡 Tip: Check your API key at https://newsdata.io/")
                 return []
         else:
             st.error(f"API request failed with status code: {response.status_code}")
+            st.info(f"Response: {response.text[:200]}")
             return []
             
     except Exception as e:
         st.error(f"Error fetching from NewsData.io: {e}")
+        st.info("💡 Try unchecking 'Use NewsData.io API' to use RSS feeds instead")
         return []
 
 def fetch_rss_feeds():
