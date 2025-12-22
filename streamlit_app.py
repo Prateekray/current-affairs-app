@@ -51,7 +51,13 @@ try:
     # PRIMARY MODEL: gemini-1.5-flash (for bulk processing)
     # High quota: 1,500 requests/day - perfect for article processing
     primary_model_loaded = False
-    primary_model_names = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro']
+    primary_model_names = [
+        'models/gemini-1.5-flash',
+        'models/gemini-1.5-flash-latest', 
+        'models/gemini-flash-latest',
+        'gemini-1.5-flash',
+        'gemini-pro'
+    ]
     
     for model_name in primary_model_names:
         try:
