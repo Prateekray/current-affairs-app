@@ -398,8 +398,111 @@ def display_interactive_mcq(mcq_text, article_index):
             st.rerun()
 
 # ============================================
-# 🎨 UI COMPONENTS
+# 🎨 UI COMPONENTS (Fixed Retry & New Question)
 # ============================================
+
+def display_interactive_mcq(row, index):
+    """
+    Display interactive MCQ with 'Retry' and 'New Question' capabilities.
+    """
+    # 1. Check for a custom generated question (if user clicked "New Question" before)
+    custom_key = f"mcq_custom_{index}"
+    if custom_key in st.session_state:
+        mcq_text = st.session_state[custom_key]
+    else:
+        mcq_text = row['MCQ']
+
+    # 2. Parse the text
+    question, options, correct_answer, explanation = parse_mcq(mcq_text)
+    
+    if not question or not options:
+        if mcq_text and "error" in mcq_text:
+            st.caption("⚠️ MCQ generation skipped for this article.")
+        return
+    
+    # 3. Setup State Keys
+    answer_key = f"answer_{index}"       # Stores user's selected option (A, B, C...)
+    
+    # Initialize state if missing
+    if answer_key not in st.session_state:
+        st.session_state[answer_key] = None
+
+    # 4. Display Question
+    st.markdown(f"**❓ Question:**")
+    st.markdown(f"*{question}*")
+    st.markdown("")
+    
+    # 5. Display Options (Buttons)
+    cols = st.columns(2)
+    option_labels = ['A', 'B', 'C', 'D']
+    
+    for idx, label in enumerate(option_labels):
+        if label in options:
+            col = cols[idx % 2]
+            with col:
+                # Button Logic
+                is_selected = (st.session_state[answer_key] == label)
+                is_disabled = (st.session_state[answer_key] is not None) 
+                
+                # Styling
+                if is_selected:
+                    if label == correct_answer:
+                        btn_type = "primary" # Green/Highlight
+                        btn_text = f"✅ {label}) {options[label]}"
+                    else:
+                        btn_type = "secondary" # Grey/Default (Streamlit doesn't support red buttons easily)
+                        btn_text = f"❌ {label}) {options[label]}"
+                else:
+                    btn_type = "secondary"
+                    btn_text = f"{label}) {options[label]}"
+                
+                # Render Button
+                if st.button(
+                    btn_text,
+                    key=f"btn_{index}_{label}",
+                    disabled=is_disabled, # Lock buttons after any selection
+                    use_container_width=True,
+                    type=btn_type
+                ):
+                    st.session_state[answer_key] = label
+                    st.rerun()
+
+    # 6. Feedback & Action Buttons
+    if st.session_state[answer_key] is not None:
+        st.markdown("---")
+        
+        # Result Message
+        if st.session_state[answer_key] == correct_answer:
+            st.success("✅ **Correct!** Great job.")
+        else:
+            st.error(f"❌ **Wrong!** The correct answer is **{correct_answer}**")
+        
+        # Explanation
+        if explanation:
+            st.info(f"💡 **Explanation:** {explanation}")
+        
+        # --- ACTION BUTTONS ---
+        col_retry, col_new = st.columns(2)
+        
+        with col_retry:
+            # BUTTON 1: RETRY (Clears selection only)
+            if st.button("🔄 Retry", key=f"retry_{index}", use_container_width=True):
+                st.session_state[answer_key] = None
+                st.rerun()
+                
+        with col_new:
+            # BUTTON 2: NEW QUESTION (Calls AI again)
+            if st.button("🎲 New Question", key=f"newq_{index}", use_container_width=True):
+                with st.spinner("🤖 Generating fresh question..."):
+                    # We use the Summary to generate a new Q because full content might not be saved in CSV
+                    new_q_text = generate_mcq(row['Title'], row['Summary']) 
+                    
+                    # Store this new question in session state to persist it
+                    st.session_state[custom_key] = new_q_text
+                    
+                    # Reset the answer so the user can play the new question
+                    st.session_state[answer_key] = None
+                    st.rerun()
 
 def display_news_card(row, index):
     """Display a single news card with interactive MCQ"""
@@ -427,7 +530,9 @@ def display_news_card(row, index):
         
         # Interactive MCQ
         st.markdown("### 🎯 Practice MCQ")
-        display_interactive_mcq(row['MCQ'], index)
+        
+        # Pass the whole row so we can access Title/Summary for regeneration if needed
+        display_interactive_mcq(row, index)
         
         st.divider()
 
