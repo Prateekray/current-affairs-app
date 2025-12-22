@@ -42,7 +42,7 @@ def check_setup():
 check_setup()
 
 # ============================================
-# 🔧 ROBUST GEMINI CONFIGURATION (Auto-List Strategy)
+# 🔧 ROBUST GEMINI CONFIGURATION (Optimized for Your Access)
 # ============================================
 
 try:
@@ -52,8 +52,7 @@ try:
     api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
     st.sidebar.info(f"🔑 Gemini Key: {api_key_preview}")
 
-    # 1. Get ALL available models for your key
-    st.sidebar.text("🔄 Fetching available models...")
+    # 1. Get ALL available models
     available_models = []
     try:
         for m in genai.list_models():
@@ -63,35 +62,35 @@ try:
         st.error(f"❌ Error listing models: {e}")
         st.stop()
 
-    # Debug: Show found models in sidebar (collapsed)
-    with st.sidebar.expander("Show Available Models"):
-        st.write(available_models)
-
-    if not available_models:
-        st.error("❌ Your API Key is valid, but has NO access to any text generation models. Check Google AI Studio settings.")
-        st.stop()
-
     # 2. Smart Selection Logic
-    # We look for keywords in the available list to pick the best tool for the job
-    
     def select_best_model(available_list, preferred_keywords):
-        # Sort to get the "latest" versions often usually at the bottom or top, 
-        # but we scan for keywords.
         for keyword in preferred_keywords:
             for model in available_list:
                 if keyword in model:
                     return model
-        return available_list[0] # Fallback to the first available one
+        return available_list[0]
 
-    # SELECT PRIMARY (Bulk - Prefer Flash)
-    primary_preferences = ["1.5-flash", "flash", "gemini-pro", "1.0-pro"]
+    # SELECT PRIMARY (Bulk - Low Cost/High Speed)
+    # Target: 2.5 Flash Lite (Best for bulk), fallback to 2.5 Flash
+    primary_preferences = [
+        "gemini-2.5-flash-lite",      # ✅ YOUR BEST BULK OPTION (Index 22)
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash"
+    ]
     primary_name = select_best_model(available_models, primary_preferences)
     
     st.session_state.primary_model = genai.GenerativeModel(primary_name)
     st.sidebar.success(f"✅ Primary: {primary_name.replace('models/', '')}")
 
-    # SELECT PREMIUM (Chat - Prefer Pro/Newer)
-    premium_preferences = ["2.0-flash", "1.5-pro", "gemini-1.5-flash"]
+    # SELECT PREMIUM (Chat - High Intelligence)
+    # Target: Gemini 3 Pro (Best for reasoning), fallback to 2.5 Pro
+    premium_preferences = [
+        "gemini-3-pro",               # ✅ YOUR BEST CHAT OPTION (Index 27)
+        "gemini-3-flash",             # New Flash (Index 28)
+        "gemini-2.5-pro",             # Solid backup (Index 1)
+        "gemini-2.5-flash"
+    ]
     premium_name = select_best_model(available_models, premium_preferences)
     
     st.session_state.premium_model = genai.GenerativeModel(premium_name)
@@ -100,7 +99,6 @@ try:
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
     st.stop()
-
 # RSS Feed URLs (backup)
 RSS_FEEDS = {
     "The Hindu": "https://www.thehindu.com/news/national/feeder/default.rss",
