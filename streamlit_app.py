@@ -236,140 +236,132 @@ def fetch_rss_feeds():
     return all_articles
 
 # ============================================
-# 🤖 AI PROCESSING FUNCTIONS
+# 🤖 AI PROCESSING FUNCTIONS (With Smart Retry)
 # ============================================
+
+def safe_generate_content(model, prompt, max_retries=3):
+    """
+    Wrapper to handle 429 Rate Limit errors automatically.
+    If limit is hit, it waits 15 seconds and tries again.
+    """
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "quota" in error_str.lower():
+                st.toast(f"⏳ Rate limit hit. Cooling down for 15s... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(15)  # Wait for the quota to reset (usually 60s window)
+                continue
+            else:
+                # If it's a real error (not quota), fail immediately
+                return None
+    return "Error: Failed after retries."
 
 def analyze_relevance(title, content):
     """AI analyzes article relevance for UPSC/SSC (score 1-10)"""
     prompt = f"""
     You are an expert UPSC/SSC exam analyzer.
-    
     Article Title: {title}
     Article Content: {content[:500]}
-    
-    Rate this article's relevance for UPSC/SSC exam preparation on a scale of 1-10, where:
-    - 10 = Extremely relevant (directly covers syllabus topics, current affairs that will likely appear in exams)
-    - 7-9 = Highly relevant (important current affairs, policy changes, international relations)
-    - 4-6 = Moderately relevant (general awareness, background knowledge)
-    - 1-3 = Low relevance (entertainment, sports, local news)
-    
-    Respond with ONLY a number from 1-10, nothing else.
+    Rate this article's relevance for UPSC/SSC exam preparation on a scale of 1-10.
+    Respond with ONLY a number from 1-10.
     """
     
-    try:
-        response = st.session_state.primary_model.generate_content(prompt)
-        time.sleep(2)  # Rate limiting
-        score_text = response.text.strip()
-        score = int(''.join(filter(str.isdigit, score_text)))
-        return min(max(score, 1), 10)  # Ensure between 1-10
-    except Exception as e:
-        time.sleep(1)
-        return 5  # Default middle score if analysis fails
+    # Use the safe wrapper
+    text = safe_generate_content(st.session_state.primary_model, prompt)
+    
+    if text:
+        try:
+            score = int(''.join(filter(str.isdigit, text)))
+            return min(max(score, 1), 10)
+        except:
+            return 5
+    return 5
 
 def generate_summary(title, content):
-    """Generate UPSC-focused summary using Gemini - Uses PRIMARY model"""
+    """Generate UPSC-focused summary"""
     prompt = f"""
     You are an expert tutor for Indian competitive exams (UPSC/SSC).
-    
     Article Title: {title}
     Article Content: {content[:1000]}
-    
     Write a concise 3-4 line summary focusing on:
     - Key facts and figures
-    - Relevance to UPSC/SSC syllabus (mention the subject area like Polity, Economy, Geography, etc.)
-    - Why this matters for exam preparation
-    
-    Keep it clear and exam-focused.
+    - Relevance to UPSC/SSC syllabus
     """
     
-    try:
-        response = st.session_state.primary_model.generate_content(prompt)
-        time.sleep(2)  # Rate limiting
-        return response.text.strip()
-    except Exception as e:
-        time.sleep(2)
-        return f"Summary generation failed: {str(e)}"
+    text = safe_generate_content(st.session_state.primary_model, prompt)
+    if text:
+        return text
+    return "Summary generation failed due to error."
 
 def generate_mcq(title, content):
-    """Generate MCQ question using Gemini - Uses PRIMARY model - RETURNS JSON"""
-    # Force JSON output to fix parsing errors
+    """Generate MCQ question - RETURNS JSON"""
     prompt = f"""
     You are an expert MCQ creator for UPSC/SSC exams.
-    
     Article Title: {title}
     Article Content: {content[:1000]}
-    
     Create ONE multiple-choice question.
-    RETURN ONLY RAW JSON. Do not use Markdown. Do not say "Here is the JSON".
-    
+    RETURN ONLY RAW JSON.
     Structure:
     {{
-        "question": "The question text here?",
-        "options": {{
-            "A": "Option A text",
-            "B": "Option B text",
-            "C": "Option C text",
-            "D": "Option D text"
-        }},
+        "question": "Question text",
+        "options": {{"A": "optA", "B": "optB", "C": "optC", "D": "optD"}},
         "correct": "A",
-        "explanation": "Explanation here"
+        "explanation": "Exp"
     }}
     """
     
-    try:
-        # Requesting JSON response via prompt engineering
-        response = st.session_state.primary_model.generate_content(prompt)
-        time.sleep(2)  # Rate limiting
-        return response.text.strip()
-    except Exception as e:
-        time.sleep(2)
-        return json.dumps({"error": str(e)})
+    text = safe_generate_content(st.session_state.primary_model, prompt)
+    
+    if text and "{" in text:
+        return text
+    return json.dumps({"error": "MCQ Generation failed"})
 
 def process_articles_with_ai(articles):
-    """Process articles with AI: filter by relevance, generate summaries and MCQs"""
+    """Process articles with AI"""
     
     # Step 1: Analyze relevance
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    status_text.text("🤖 AI analyzing article relevance...")
-    st.info("⏱️ This will take ~3 minutes due to API rate limits (5 requests/min). Please be patient!")
+    status_text.text("🤖 AI analyzing relevance...")
     
     for idx, article in enumerate(articles):
         article['relevance_score'] = analyze_relevance(article['title'], article['content'])
-        progress_bar.progress((idx + 1) / len(articles) * 0.3)  # 30% for analysis
+        time.sleep(2) # Small buffer between requests
+        progress_bar.progress((idx + 1) / len(articles) * 0.3)
     
-    # Step 2: Sort by relevance and keep top articles
+    # Step 2: Sort and keep top 5
     articles_sorted = sorted(articles, key=lambda x: x['relevance_score'], reverse=True)
-    top_articles = articles_sorted[:5]  # REDUCED to 5 articles to avoid rate limits
+    top_articles = articles_sorted[:5]
     
-    status_text.text(f"✅ Selected top {len(top_articles)} most relevant articles (processing with delays for rate limits)")
-    time.sleep(2)
+    status_text.text(f"✅ Processing top {len(top_articles)} articles...")
     
     # Step 3: Generate summaries and MCQs
     processed = []
     
     for idx, article in enumerate(top_articles):
-        status_text.text(f"Processing article {idx+1}/{len(top_articles)}: {article['title'][:50]}... (⏱️ ~20 sec per article)")
+        status_text.text(f"Processing {idx+1}/{len(top_articles)}: {article['title'][:40]}...")
         
-        try:
-            summary = generate_summary(article['title'], article['content'])
-            mcq = generate_mcq(article['title'], article['content'])
-            
-            processed.append({
-                'Date': article['date'],
-                'Title': article['title'],
-                'Source': article['source'],
-                'Summary': summary,
-                'MCQ': mcq,
-                'Link': article['link'],
-                'Relevance_Score': article['relevance_score']
-            })
-            
-        except Exception as e:
-            st.warning(f"Processing failed for '{article['title'][:30]}...': {e}")
+        summary = generate_summary(article['title'], article['content'])
+        time.sleep(4) # Increased buffer to respect 10 RPM
         
-        progress_bar.progress(0.3 + (idx + 1) / len(top_articles) * 0.7)  # 70% for processing
+        mcq = generate_mcq(article['title'], article['content'])
+        time.sleep(4) # Increased buffer to respect 10 RPM
+        
+        processed.append({
+            'Date': article['date'],
+            'Title': article['title'],
+            'Source': article['source'],
+            'Summary': summary,
+            'MCQ': mcq,
+            'Link': article['link'],
+            'Relevance_Score': article['relevance_score']
+        })
+        
+        progress_bar.progress(0.3 + (idx + 1) / len(top_articles) * 0.7)
     
     status_text.text("✅ Processing complete!")
     time.sleep(1)
