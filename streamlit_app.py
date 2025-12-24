@@ -634,12 +634,97 @@ def main():
             4. **Practice** - Interactive MCQs with instant feedback
             """)
         else:
-            # Filter controls
-            col1, col2, col3 = st.columns([2, 1, 1])
+            # ========================================
+            # 📅 DATE FILTERING SECTION (NEW!)
+            # ========================================
+            st.markdown("### 🔍 Filter Articles")
+            
+            # Convert Date column to datetime if it's not already
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+                df = df.dropna(subset=['Date'])  # Remove rows with invalid dates
+            
+            # Quick filter buttons
+            col_quick1, col_quick2, col_quick3, col_quick4 = st.columns(4)
+            
+            with col_quick1:
+                if st.button("📅 Today", use_container_width=True):
+                    st.session_state.date_filter = 'today'
+            
+            with col_quick2:
+                if st.button("📆 Yesterday", use_container_width=True):
+                    st.session_state.date_filter = 'yesterday'
+            
+            with col_quick3:
+                if st.button("📊 Last 7 Days", use_container_width=True):
+                    st.session_state.date_filter = 'week'
+            
+            with col_quick4:
+                if st.button("📈 Last 30 Days", use_container_width=True):
+                    st.session_state.date_filter = 'month'
+            
+            st.markdown("---")
+            
+            # Date range selector
+            col_date1, col_date2 = st.columns(2)
+            
+            with col_date1:
+                # Get min and max dates from data
+                min_date = df['Date'].min().date() if not df.empty else datetime.now().date()
+                max_date = df['Date'].max().date() if not df.empty else datetime.now().date()
+                
+                start_date = st.date_input(
+                    "📅 From Date:",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    help="Select start date"
+                )
+            
+            with col_date2:
+                end_date = st.date_input(
+                    "📅 To Date:",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    help="Select end date"
+                )
+            
+            # Apply quick filter presets
+            if 'date_filter' in st.session_state:
+                today = datetime.now().date()
+                
+                if st.session_state.date_filter == 'today':
+                    start_date = today
+                    end_date = today
+                elif st.session_state.date_filter == 'yesterday':
+                    yesterday = today - pd.Timedelta(days=1)
+                    start_date = yesterday
+                    end_date = yesterday
+                elif st.session_state.date_filter == 'week':
+                    start_date = today - pd.Timedelta(days=7)
+                    end_date = today
+                elif st.session_state.date_filter == 'month':
+                    start_date = today - pd.Timedelta(days=30)
+                    end_date = today
+                
+                # Clear the session state after applying
+                del st.session_state.date_filter
+            
+            # Apply date filter
+            df_filtered = df[
+                (df['Date'].dt.date >= start_date) & 
+                (df['Date'].dt.date <= end_date)
+            ]
+            
+            st.markdown("---")
+            
+            # Filter controls (Source filter + Stats)
+            col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
             
             with col1:
-                if 'Source' in df.columns:
-                    sources = df['Source'].unique().tolist()
+                if 'Source' in df_filtered.columns:
+                    sources = df_filtered['Source'].unique().tolist()
                     source_filter = st.multiselect(
                         "Filter by source:",
                         options=sources,
@@ -649,27 +734,68 @@ def main():
                     source_filter = []
             
             with col2:
-                st.metric("📄 Total Articles", len(df))
+                st.metric("📄 Articles", len(df_filtered))
             
             with col3:
-                if 'Relevance_Score' in df.columns and not df['Relevance_Score'].isna().all():
-                    avg_score = df['Relevance_Score'].mean()
-                    st.metric("⭐ Avg Relevance", f"{avg_score:.1f}/10")
+                if 'Relevance_Score' in df_filtered.columns and not df_filtered['Relevance_Score'].isna().all():
+                    avg_score = df_filtered['Relevance_Score'].mean()
+                    st.metric("⭐ Avg Score", f"{avg_score:.1f}/10")
             
-            # Apply filters
-            if source_filter and 'Source' in df.columns:
-                df = df[df['Source'].isin(source_filter)]
+            with col4:
+                # Show date range
+                days_shown = (end_date - start_date).days + 1
+                st.metric("📅 Days", days_shown)
             
-            # Sort by relevance
-            if 'Relevance_Score' in df.columns:
-                df = df.sort_values('Relevance_Score', ascending=False)
+            # Apply source filter
+            if source_filter and 'Source' in df_filtered.columns:
+                df_filtered = df_filtered[df_filtered['Source'].isin(source_filter)]
+            
+            # Sort by date (newest first) and relevance
+            if 'Relevance_Score' in df_filtered.columns:
+                df_filtered = df_filtered.sort_values(
+                    ['Date', 'Relevance_Score'], 
+                    ascending=[False, False]
+                )
+            else:
+                df_filtered = df_filtered.sort_values('Date', ascending=False)
+            
+            # Show date breakdown
+            if len(df_filtered) > 0:
+                with st.expander("📊 Articles by Date (Click to expand)"):
+                    date_counts = df_filtered.groupby(df_filtered['Date'].dt.date).size().reset_index()
+                    date_counts.columns = ['Date', 'Count']
+                    date_counts = date_counts.sort_values('Date', ascending=False)
+                    
+                    # Display as a nice table
+                    for _, row in date_counts.iterrows():
+                        col_a, col_b = st.columns([3, 1])
+                        with col_a:
+                            st.text(f"📅 {row['Date'].strftime('%B %d, %Y (%A)')}")
+                        with col_b:
+                            st.text(f"📄 {row['Count']} articles")
+            
+            st.markdown("---")
             
             # Display articles
-            if df.empty:
-                st.warning("No articles match your selected filters.")
+            if df_filtered.empty:
+                st.warning(f"📭 No articles found between {start_date.strftime('%B %d, %Y')} and {end_date.strftime('%B %d, %Y')}")
+                st.info("💡 Try expanding the date range or adjusting your filters.")
             else:
-                for idx, row in df.iterrows():
-                    display_news_card(row, idx)
+                st.success(f"📚 Showing {len(df_filtered)} articles from {start_date.strftime('%b %d')} to {end_date.strftime('%b %d, %Y')}")
+                
+                # Group by date for better organization
+                for date in df_filtered['Date'].dt.date.unique():
+                    date_articles = df_filtered[df_filtered['Date'].dt.date == date]
+                    
+                    # Date header
+                    st.markdown(f"## 📅 {date.strftime('%B %d, %Y (%A)')}")
+                    st.caption(f"{len(date_articles)} articles")
+                    
+                    # Display articles for this date
+                    for idx, row in date_articles.iterrows():
+                        display_news_card(row, idx)
+                    
+                    st.markdown("---")
     
     with tab2:
         st.header("💬 Ask AI About the News")
