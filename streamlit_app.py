@@ -1,44 +1,12 @@
-# Debug imports - this will show which package fails
-import sys
-
-try:
-    import streamlit as st
-    st.success("✅ Streamlit loaded")
-except ImportError as e:
-    print(f"❌ Streamlit failed: {e}")
-    sys.exit(1)
-
-try:
-    import feedparser
-    st.success("✅ Feedparser loaded")
-except ImportError as e:
-    st.error(f"❌ Feedparser failed: {e}")
-    st.stop()
-
-try:
-    import pandas as pd
-    st.success("✅ Pandas loaded")
-except ImportError as e:
-    st.error(f"❌ Pandas failed: {e}")
-    st.stop()
-
-try:
-    from datetime import datetime
-    st.success("✅ Datetime loaded")
-except ImportError as e:
-    st.error(f"❌ Datetime failed: {e}")
-    st.stop()
-
-try:
-    import google.generativeai as genai
-    st.success("✅ Google Generative AI loaded")
-except ImportError as e:
-    st.error(f"❌ Google Generative AI failed: {e}")
-    st.info("💡 Try: pip install google-generativeai")
-    st.stop()
-
+import streamlit as st
+import feedparser
+import pandas as pd
+from datetime import datetime
+import google.generativeai as genai
 import time
 import json
+import requests
+import openai
 
 # ============================================
 # 🔧 CONFIGURATION & SETUP
@@ -56,82 +24,79 @@ def check_setup():
     errors = []
     
     if "GEMINI_API_KEY" not in st.secrets:
-        errors.append("❌ **Gemini API Key is missing!**\n   - Add it to `.streamlit/secrets.toml` like this:\n   ```\n   GEMINI_API_KEY = 'your-key-here'\n   ```")
+        errors.append("❌ **Gemini API Key is missing!** (Required for Chat)\n   - Get it at: https://aistudio.google.com/apikey")
     
+    if "GROQ_API_KEY" not in st.secrets:
+        errors.append("❌ **Groq API Key is missing!** (Required for Bulk Processing)\n   - Get it free at: https://console.groq.com")
+        
     if "SHEET_ID" not in st.secrets:
-        errors.append("❌ **Google Sheet ID is missing!**\n   - Add it to `.streamlit/secrets.toml` like this:\n   ```\n   SHEET_ID = 'your-sheet-id-here'\n   ```")
+        errors.append("❌ **Google Sheet ID is missing!**")
+    
+    if "NEWSDATA_API_KEY" not in st.secrets:
+        errors.append("⚠️ **NewsData.io API Key is missing!** (Optional)\n   - Get it at: https://newsdata.io/register")
     
     if errors:
         st.error("### ⚠️ Setup Not Complete!")
         for error in errors:
             st.markdown(error)
-        st.info("💡 **Need help?** Check the setup guide in the README file!")
+        st.info("💡 **Add your API keys in:** Streamlit Cloud → App Settings → Secrets")
         st.stop()
 
 check_setup()
 
-# Configure Gemini
+# ============================================
+# 🔧 HYBRID AI CONFIGURATION (Groq + Gemini)
+# ============================================
+
 try:
+    # 1. Setup Groq (Primary/Bulk - FREE & FAST)
+    groq_client = openai.OpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=st.secrets["GROQ_API_KEY"]
+    )
+    st.session_state.groq_client = groq_client
+    st.sidebar.success(f"✅ Bulk AI: Groq Llama-3.1 (Turbo)")
+
+    # 2. Setup Gemini (Premium/Chat - SMART)
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # Show API key format (first 10 chars only for security)
-    api_key_preview = st.secrets["GEMINI_API_KEY"][:10] + "..."
-    st.sidebar.info(f"🔑 API Key: {api_key_preview}")
-    
-    # List all available models
-    st.sidebar.markdown("### 📋 Available Models:")
+    # Try to find the best Gemini model available
+    available_models = []
     try:
-        models_list = list(genai.list_models())
-        if not models_list:
-            st.sidebar.error("⚠️ No models found! Your API key might be invalid.")
-        else:
-            available_model_names = []
-            for m in models_list:
-                if 'generateContent' in m.supported_generation_methods:
-                    st.sidebar.text(f"✓ {m.name}")
-                    available_model_names.append(m.name)
-    except Exception as list_error:
-        st.sidebar.error(f"❌ Cannot list models: {list_error}")
-        st.sidebar.info("This usually means your API key is from Google Cloud Console instead of Google AI Studio.")
-        available_model_names = []
-    
-    # Try to use the model - try multiple options
-    model_loaded = False
-    model_names_to_try = [
-        'models/gemini-2.5-flash',
-        'models/gemini-flash-latest',
-        'models/gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-pro',
-        'gemini-1.0-pro'
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+    except:
+        pass
+
+    # Prefer newer models for better quality
+    model_preferences = [
+        "models/gemini-3-pro-preview",
+        "models/gemini-2.5-pro",
+        "models/gemini-2.5-flash",
+        "models/gemini-2.0-flash-exp",
+        "models/gemini-1.5-flash"
     ]
     
-    for model_name in model_names_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            # Store in session state so functions can access it
-            st.session_state.model = model
-            st.sidebar.success(f"✅ Using model: {model_name}")
-            model_loaded = True
+    chat_model_name = None
+    for preferred in model_preferences:
+        if preferred in available_models:
+            chat_model_name = preferred
             break
-        except Exception as model_error:
-            st.sidebar.warning(f"⚠️ {model_name} failed: {str(model_error)[:50]}")
-            continue
     
-    if not model_loaded:
-        st.error("❌ Could not load any Gemini model!")
-        st.info("**Solution:** Get a valid API key from: https://aistudio.google.com/app/apikey")
-        if available_model_names:
-            st.info(f"Available models found: {', '.join(available_model_names)}")
-        st.stop()
-    
+    if not chat_model_name:
+        chat_model_name = "gemini-1.5-flash"  # Fallback
+        
+    st.session_state.premium_model = genai.GenerativeModel(chat_model_name)
+    model_display = chat_model_name.replace('models/', '')
+    st.sidebar.success(f"🌟 Chat AI: {model_display}")
+
 except Exception as e:
-    st.error(f"Failed to configure Gemini AI: {e}")
-    st.info("💡 Make sure your GEMINI_API_KEY is set correctly in Streamlit secrets")
-    st.info("Get your key from: https://aistudio.google.com/app/apikey")
+    st.error(f"❌ Failed to configure AI: {e}")
+    st.info("💡 Check your API keys in Streamlit secrets")
     st.stop()
 
-# RSS Feed URLs
+# RSS Feed URLs (backup)
 RSS_FEEDS = {
     "The Hindu": "https://www.thehindu.com/news/national/feeder/default.rss",
     "PIB": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1"
@@ -152,21 +117,16 @@ def load_news_from_sheet():
         url = get_sheet_url()
         df = pd.read_csv(url)
         
-        # If sheet is empty or only has headers, return empty DataFrame
         if df.empty or len(df) == 0:
-            return pd.DataFrame(columns=['Date', 'Title', 'Source', 'Summary', 'MCQ', 'Link'])
+            return pd.DataFrame(columns=['Date', 'Title', 'Source', 'Summary', 'MCQ', 'Link', 'Relevance_Score'])
         
         return df
     except Exception as e:
         st.warning(f"Could not load data from Google Sheets: {e}")
-        return pd.DataFrame(columns=['Date', 'Title', 'Source', 'Summary', 'MCQ', 'Link'])
+        return pd.DataFrame(columns=['Date', 'Title', 'Source', 'Summary', 'MCQ', 'Link', 'Relevance_Score'])
 
 def save_news_to_sheet(new_data):
-    """
-    Save news to Google Sheets
-    Note: For simplicity, this displays instructions to manually copy-paste
-    For automated writing, you'd need Google Sheets API with service account
-    """
+    """Display instructions to manually save data"""
     st.info("""
     ### 📝 Manual Save Required
     
@@ -174,13 +134,10 @@ def save_news_to_sheet(new_data):
     1. Copy the table below
     2. Go to your Google Sheet
     3. Paste it as new rows
-    
-    *(For automatic saving, you'd need to set up Google Sheets API credentials)*
     """)
     
-    st.dataframe(new_data)
+    st.dataframe(new_data, use_container_width=True)
     
-    # Provide CSV download as backup
     csv = new_data.to_csv(index=False)
     st.download_button(
         label="📥 Download as CSV",
@@ -190,162 +147,399 @@ def save_news_to_sheet(new_data):
     )
 
 # ============================================
-# 🤖 AI PROCESSING FUNCTIONS
+# 📰 NEWS FETCHING FUNCTIONS
 # ============================================
 
-def generate_summary(title, content):
-    """Generate UPSC-focused summary using Gemini"""
-    prompt = f"""
-    You are an expert tutor for Indian competitive exams (UPSC/SSC).
-    
-    Article Title: {title}
-    Article Content: {content[:1000]}
-    
-    Write a concise 3-4 line summary focusing on:
-    - Key facts and figures
-    - Relevance to UPSC/SSC syllabus (mention the subject area like Polity, Economy, Geography, etc.)
-    - Why this matters for exam preparation
-    
-    Keep it clear and exam-focused.
-    """
+def fetch_newsdata_articles():
+    """Fetch news from NewsData.io API"""
+    if "NEWSDATA_API_KEY" not in st.secrets:
+        st.warning("NewsData.io API key not configured. Using RSS feeds instead.")
+        return []
     
     try:
-        # Use the global model instance
-        response = st.session_state.model.generate_content(prompt)
-        return response.text.strip()
+        api_key = st.secrets["NEWSDATA_API_KEY"]
+        url = "https://newsdata.io/api/1/news"
+        params = {
+            'apikey': api_key,
+            'country': 'in',
+            'language': 'en',
+            'category': 'politics,top,world',
+            'size': 10
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'success' and 'results' in data:
+                articles = []
+                for article in data.get('results', []):
+                    description = article.get('description') or article.get('content') or ''
+                    content = description[:800] if description else 'No content available'
+                    
+                    articles.append({
+                        'date': datetime.now().strftime('%Y-%m-%d'),
+                        'title': article.get('title', 'No title'),
+                        'source': (article.get('source_id') or 'Unknown').title(),
+                        'link': article.get('link', ''),
+                        'content': content
+                    })
+                return articles
+            else:
+                error_msg = data.get('results', {}).get('message', 'Unknown error')
+                st.warning(f"NewsData.io API returned: {error_msg}")
+                return []
+        else:
+            st.warning(f"NewsData.io API status code: {response.status_code}")
+            return []
+            
     except Exception as e:
-        return f"Summary generation failed: {str(e)}"
-
-def generate_mcq(title, content):
-    """Generate MCQ question using Gemini"""
-    prompt = f"""
-    You are an expert MCQ creator for UPSC/SSC exams.
-    
-    Article Title: {title}
-    Article Content: {content[:1000]}
-    
-    Create ONE multiple-choice question in this EXACT format:
-    
-    Q: [Question text]
-    A) [Option A]
-    B) [Option B]
-    C) [Option C]
-    D) [Option D]
-    Correct Answer: [A/B/C/D]
-    Explanation: [1-2 line explanation]
-    
-    Make it moderately challenging and exam-relevant.
-    """
-    
-    try:
-        # Use the global model instance
-        response = st.session_state.model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"MCQ generation failed: {str(e)}"
-
-# ============================================
-# 📡 NEWS FETCHING FUNCTIONS
-# ============================================
+        st.warning(f"Error fetching from NewsData.io: {e}")
+        return []
 
 def fetch_rss_feeds():
-    """Fetch latest news from RSS feeds"""
+    """Fetch news from RSS feeds (backup method)"""
     all_articles = []
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
+    progress = st.progress(0)
     for idx, (source, url) in enumerate(RSS_FEEDS.items()):
-        status_text.text(f"Fetching from {source}...")
-        
         try:
             feed = feedparser.parse(url)
-            
-            # Get top 5 articles from each source
             for entry in feed.entries[:5]:
                 article = {
                     'date': datetime.now().strftime('%Y-%m-%d'),
                     'title': entry.get('title', 'No title'),
                     'source': source,
                     'link': entry.get('link', ''),
-                    'content': entry.get('summary', entry.get('description', ''))[:500]
+                    'content': entry.get('summary', entry.get('description', ''))[:800]
                 }
                 all_articles.append(article)
-            
-            time.sleep(1)  # Be nice to the servers
-            
+            time.sleep(1)  # Be nice to servers
         except Exception as e:
             st.warning(f"Could not fetch from {source}: {e}")
         
-        progress_bar.progress((idx + 1) / len(RSS_FEEDS))
+        progress.progress((idx + 1) / len(RSS_FEEDS))
     
-    status_text.text("✅ Fetching complete!")
-    time.sleep(1)
-    status_text.empty()
-    progress_bar.empty()
-    
+    progress.empty()
     return all_articles
 
-def process_articles_with_ai(articles):
-    """Process articles with AI to generate summaries and MCQs"""
-    processed = []
+# ============================================
+# 🤖 AI PROCESSING FUNCTIONS (GROQ POWERED)
+# ============================================
+
+def get_groq_response(system_prompt, user_content, json_mode=False):
+    """Helper to call Groq Llama-3 (with retry logic)"""
+    max_retries = 2
     
+    for attempt in range(max_retries):
+        try:
+            # Enforce JSON output if requested
+            if json_mode:
+                system_prompt += " YOU MUST RETURN ONLY VALID JSON. NO MARKDOWN. NO CODE BLOCKS. NO EXPLANATORY TEXT."
+                
+            response = st.session_state.groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",  # Extremely fast & free
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.3,
+                max_tokens=1024
+            )
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            if attempt == max_retries - 1:
+                st.error(f"⚠️ Groq API Error: {e}")
+                st.info("💡 Get your free Groq API key at: https://console.groq.com")
+                return None
+            time.sleep(1)  # Brief pause before retry
+
+def analyze_relevance(title, content):
+    """Analyze article relevance using Groq (1-10 score)"""
+    prompt = f"Article Title: {title}\n\nContent Preview: {content[:500]}"
+    
+    system = """You are a UPSC/SSC exam relevance analyzer. 
+    
+    Rate articles 1-10:
+    - 10: Extremely relevant (government policies, international relations, major economic news)
+    - 7-9: Highly relevant (important current affairs, constitutional matters)
+    - 4-6: Moderately relevant (general awareness topics)
+    - 1-3: Low relevance (entertainment, sports, local crimes)
+    
+    Return ONLY this JSON format: {"score": number}
+    Example: {"score": 8}"""
+    
+    response = get_groq_response(system, prompt, json_mode=True)
+    
+    try:
+        # Clean potential markdown
+        cleaned = response.replace("```json", "").replace("```", "").strip()
+        score = json.loads(cleaned)['score']
+        return min(max(int(score), 1), 10)  # Ensure 1-10 range
+    except:
+        return 5  # Default to middle score
+
+def generate_summary(title, content):
+    """Generate UPSC-focused summary using Groq"""
+    prompt = f"Article Title: {title}\n\nContent: {content[:1000]}"
+    
+    system = """You are an expert UPSC/SSC tutor. 
+    
+    Write a concise 3-4 line summary that:
+    1. Highlights key facts and figures
+    2. Mentions the syllabus area (Polity, Economy, Geography, International Relations, etc.)
+    3. Explains why this matters for exam preparation
+    
+    Keep it clear, factual, and exam-focused."""
+    
+    result = get_groq_response(system, prompt)
+    return result or "Summary generation failed."
+
+def generate_mcq(title, content):
+    """Generate MCQ using Groq (JSON format)"""
+    prompt = f"Article Title: {title}\n\nContent: {content[:1000]}"
+    
+    system = """You are an expert UPSC/SSC MCQ creator.
+    
+    Create ONE challenging multiple-choice question based on this article.
+    
+    Return ONLY this JSON format (no markdown, no code blocks):
+    {
+        "question": "Your question text here",
+        "options": {
+            "A": "First option",
+            "B": "Second option",
+            "C": "Third option",
+            "D": "Fourth option"
+        },
+        "correct": "A",
+        "explanation": "Brief explanation why this is correct"
+    }
+    
+    Make it exam-standard difficulty."""
+    
+    response = get_groq_response(system, prompt, json_mode=True)
+    
+    try:
+        # Clean markdown wrappers
+        cleaned = response.replace("```json", "").replace("```", "").strip()
+        # Validate it's valid JSON
+        json.loads(cleaned)
+        return cleaned
+    except:
+        return json.dumps({
+            "question": "Question generation failed",
+            "options": {"A": "N/A", "B": "N/A", "C": "N/A", "D": "N/A"},
+            "correct": "A",
+            "explanation": "Unable to generate MCQ for this article"
+        })
+
+def process_articles_with_ai(articles):
+    """Process articles with Groq AI (fast bulk processing)"""
+    
+    start_time = time.time()
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    for idx, article in enumerate(articles):
-        status_text.text(f"Processing article {idx+1}/{len(articles)}: {article['title'][:50]}...")
-        
-        try:
-            summary = generate_summary(article['title'], article['content'])
-            time.sleep(1)  # Rate limiting
-            
-            mcq = generate_mcq(article['title'], article['content'])
-            time.sleep(1)  # Rate limiting
-            
-            processed.append({
-                'Date': article['date'],
-                'Title': article['title'],
-                'Source': article['source'],
-                'Summary': summary,
-                'MCQ': mcq,
-                'Link': article['link']
-            })
-            
-        except Exception as e:
-            st.warning(f"Processing failed for '{article['title'][:30]}...': {e}")
-        
-        progress_bar.progress((idx + 1) / len(articles))
+    status_text.text("⚡ Groq AI analyzing articles (turbo speed)...")
     
-    status_text.text("✅ AI processing complete!")
-    time.sleep(1)
+    processed = []
+    
+    for idx, article in enumerate(articles):
+        try:
+            # Step 1: Analyze relevance
+            score = analyze_relevance(article['title'], article['content'])
+            
+            # Step 2: Filter - only process relevant articles (score >= 4)
+            if score >= 4:
+                status_text.text(f"⚡ Processing: {article['title'][:50]}... (Score: {score}/10)")
+                
+                summary = generate_summary(article['title'], article['content'])
+                mcq = generate_mcq(article['title'], article['content'])
+                
+                processed.append({
+                    'Date': article['date'],
+                    'Title': article['title'],
+                    'Source': article['source'],
+                    'Summary': summary,
+                    'MCQ': mcq,
+                    'Link': article['link'],
+                    'Relevance_Score': score
+                })
+            else:
+                status_text.text(f"⏭️ Skipping: {article['title'][:50]}... (Score: {score}/10 - Too low)")
+        
+        except Exception as e:
+            st.warning(f"⚠️ Failed to process: {article['title'][:30]}... - {e}")
+        
+        # Update progress
+        progress_bar.progress((idx + 1) / len(articles))
+        time.sleep(0.1)  # Brief pause for UI update
+    
+    # Calculate processing time
+    elapsed = time.time() - start_time
+    
     status_text.empty()
     progress_bar.empty()
     
+    if processed:
+        st.success(f"✅ Processed {len(processed)} relevant articles in {elapsed:.1f} seconds! ⚡")
+    else:
+        st.warning("No articles met the relevance threshold (score >= 4)")
+    
     return pd.DataFrame(processed)
+
+# ============================================
+# 🎮 INTERACTIVE MCQ COMPONENT
+# ============================================
+
+def parse_mcq(mcq_text):
+    """Parse JSON MCQ into structured format"""
+    try:
+        # Clean potential markdown
+        cleaned = mcq_text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(cleaned)
+        
+        question = data.get('question', 'No question')
+        options = data.get('options', {})
+        correct = data.get('correct', 'A')
+        explanation = data.get('explanation', 'No explanation')
+        
+        return question, options, correct, explanation
+    except:
+        return None, None, None, None
+
+def display_interactive_mcq(row, index):
+    """Display interactive MCQ with Retry and New Question features"""
+    
+    # Check for custom generated question
+    custom_key = f"mcq_custom_{index}"
+    if custom_key in st.session_state:
+        mcq_text = st.session_state[custom_key]
+    else:
+        mcq_text = row['MCQ']
+    
+    # Parse MCQ
+    question, options, correct_answer, explanation = parse_mcq(mcq_text)
+    
+    if not question or not options:
+        st.caption("⚠️ MCQ unavailable for this article")
+        return
+    
+    # Setup state keys
+    answer_key = f"answer_{index}"
+    
+    if answer_key not in st.session_state:
+        st.session_state[answer_key] = None
+    
+    # Display question
+    st.markdown(f"**❓ Question:**")
+    st.markdown(f"*{question}*")
+    st.markdown("")
+    
+    # Display option buttons
+    cols = st.columns(2)
+    option_labels = ['A', 'B', 'C', 'D']
+    
+    for idx, label in enumerate(option_labels):
+        if label in options:
+            col = cols[idx % 2]
+            with col:
+                is_selected = (st.session_state[answer_key] == label)
+                is_disabled = (st.session_state[answer_key] is not None)
+                
+                # Button styling
+                if is_selected:
+                    if label == correct_answer:
+                        btn_type = "primary"
+                        btn_text = f"✅ {label}) {options[label]}"
+                    else:
+                        btn_type = "secondary"
+                        btn_text = f"❌ {label}) {options[label]}"
+                else:
+                    btn_type = "secondary"
+                    btn_text = f"{label}) {options[label]}"
+                
+                # Render button
+                if st.button(
+                    btn_text,
+                    key=f"btn_{index}_{label}",
+                    disabled=is_disabled,
+                    use_container_width=True,
+                    type=btn_type
+                ):
+                    st.session_state[answer_key] = label
+                    st.rerun()
+    
+    # Feedback and action buttons
+    if st.session_state[answer_key] is not None:
+        st.markdown("---")
+        
+        # Result message
+        if st.session_state[answer_key] == correct_answer:
+            st.success("✅ **Correct!** Excellent work!")
+        else:
+            st.error(f"❌ **Wrong!** The correct answer is **{correct_answer}**")
+        
+        # Explanation
+        if explanation:
+            st.info(f"💡 **Explanation:** {explanation}")
+        
+        # Action buttons
+        col_retry, col_new = st.columns(2)
+        
+        with col_retry:
+            if st.button("🔄 Retry This Question", key=f"retry_{index}", use_container_width=True):
+                st.session_state[answer_key] = None
+                st.rerun()
+        
+        with col_new:
+            if st.button("🎲 Generate New Question", key=f"newq_{index}", use_container_width=True):
+                with st.spinner("🤖 AI generating fresh question..."):
+                    # Generate new question using title and summary
+                    new_mcq = generate_mcq(row['Title'], row['Summary'])
+                    st.session_state[custom_key] = new_mcq
+                    st.session_state[answer_key] = None
+                    st.rerun()
 
 # ============================================
 # 🎨 UI COMPONENTS
 # ============================================
 
-def display_news_card(row):
-    """Display a single news card"""
+def display_news_card(row, index):
+    """Display a single news card with interactive MCQ"""
     with st.container():
-        st.markdown(f"### 📰 {row['Title']}")
-        
-        col1, col2 = st.columns([3, 1])
-        
+        # Header with relevance score
+        col1, col2 = st.columns([4, 1])
         with col1:
-            st.markdown(f"**Source:** {row['Source']} | **Date:** {row['Date']}")
-            st.markdown(f"**Summary:**\n{row['Summary']}")
-            
-            if st.button(f"🔗 Read Full Article", key=f"link_{row.name}"):
-                st.markdown(f"[Open in new tab]({row['Link']})")
-        
+            st.markdown(f"### 📰 {row['Title']}")
         with col2:
-            st.markdown("**🎯 Practice MCQ**")
-            with st.expander("Show Question"):
-                st.markdown(row['MCQ'])
+            if 'Relevance_Score' in row and pd.notna(row['Relevance_Score']):
+                score = int(row['Relevance_Score'])
+                # Color-coded score
+                if score >= 8:
+                    st.metric("🎯 Relevance", f"{score}/10", delta="High")
+                elif score >= 6:
+                    st.metric("🎯 Relevance", f"{score}/10", delta="Medium")
+                else:
+                    st.metric("🎯 Relevance", f"{score}/10")
+        
+        # Source and date
+        st.markdown(f"**Source:** {row['Source']} | **Date:** {row['Date']}")
+        
+        # Summary
+        st.markdown(f"**📝 Summary:**")
+        st.markdown(row['Summary'])
+        
+        # Link
+        st.markdown(f"[🔗 Read Full Article]({row['Link']})")
+        
+        st.markdown("---")
+        
+        # Interactive MCQ
+        st.markdown("### 🎯 Practice MCQ")
+        display_interactive_mcq(row, index)
         
         st.divider()
 
@@ -362,118 +556,296 @@ def main():
     with st.sidebar:
         st.header("⚙️ Control Panel")
         
-        if st.button("🔄 Fetch New Articles", type="primary"):
-            with st.spinner("Fetching and processing news..."):
+        # News source selector
+        st.markdown("### 📡 News Source")
+        use_newsdata = st.checkbox(
+            "Use NewsData.io API", 
+            value="NEWSDATA_API_KEY" in st.secrets,
+            help="Premium news sources (Times of India, Hindu, etc.)"
+        )
+        
+        if st.button("🔄 Fetch & Process Articles", type="primary"):
+            with st.spinner("Fetching news..."):
                 # Fetch articles
-                articles = fetch_rss_feeds()
+                if use_newsdata:
+                    st.info("📡 Fetching from NewsData.io (premium sources)...")
+                    articles = fetch_newsdata_articles()
+                    
+                    # Fallback to RSS if NewsData fails
+                    if not articles:
+                        st.info("📡 Falling back to RSS feeds...")
+                        articles = fetch_rss_feeds()
+                else:
+                    st.info("📡 Fetching from RSS feeds (The Hindu, PIB)...")
+                    articles = fetch_rss_feeds()
                 
                 if articles:
-                    st.success(f"Fetched {len(articles)} articles!")
+                    st.success(f"✅ Fetched {len(articles)} articles!")
                     
-                    # Process with AI
+                    # Process with Groq AI
                     processed_df = process_articles_with_ai(articles)
                     
                     if not processed_df.empty:
-                        st.success(f"Processed {len(processed_df)} articles!")
-                        
                         # Store in session state
                         st.session_state['new_articles'] = processed_df
                         
                         # Show save instructions
                         save_news_to_sheet(processed_df)
                     else:
-                        st.error("AI processing failed!")
+                        st.warning("⚠️ No articles passed the relevance filter (score >= 4)")
                 else:
-                    st.error("No articles fetched!")
+                    st.error("❌ No articles fetched. Check your internet connection.")
         
         st.divider()
-        st.markdown("""
-        ### 📚 About
-        This app fetches daily news from:
-        - The Hindu
-        - Press Information Bureau (PIB)
         
-        **Features:**
-        - AI-generated summaries
-        - Practice MCQs
-        - Exam-focused analysis
+        st.markdown("""
+        ### ⚡ Tech Stack
+        - **Bulk Processing:** Groq Llama-3.1
+          - Unlimited free requests
+          - Lightning fast (2-3 sec/article)
+        - **Premium Chat:** Google Gemini
+          - Highest quality responses
+          - Context-aware answers
+        
+        ### 📊 Features
+        - Smart relevance filtering
+        - Interactive MCQ practice
+        - Retry & new question options
+        - Multi-source news aggregation
         """)
     
-    # Main content area with tabs
+    # Main content tabs
     tab1, tab2 = st.tabs(["📋 Daily Feed", "💬 Ask the AI"])
     
     with tab1:
-        st.header("Today's Current Affairs")
+        st.header("📚 Today's Current Affairs")
         
         # Load existing news
         df = load_news_from_sheet()
         
         if df.empty:
-            st.info("👋 No articles yet! Click **'Fetch New Articles'** in the sidebar to get started.")
+            st.info("👋 **No articles yet!**\n\nClick **'Fetch & Process Articles'** in the sidebar to get started.")
+            st.markdown("---")
+            st.markdown("### 🚀 How it works:")
+            st.markdown("""
+            1. **Fetch** - Gets latest news from multiple sources
+            2. **Analyze** - AI scores each article for UPSC/SSC relevance
+            3. **Filter** - Only shows high-quality, exam-relevant content
+            4. **Practice** - Interactive MCQs with instant feedback
+            """)
         else:
-            # Filter options
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                source_filter = st.multiselect(
-                    "Filter by source:",
-                    options=df['Source'].unique() if 'Source' in df.columns else [],
-                    default=df['Source'].unique() if 'Source' in df.columns else []
+            # ========================================
+            # 📅 DATE FILTERING SECTION (NEW!)
+            # ========================================
+            st.markdown("### 🔍 Filter Articles")
+            
+            # Convert Date column to datetime if it's not already
+            if 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+                df = df.dropna(subset=['Date'])  # Remove rows with invalid dates
+            
+            # Quick filter buttons
+            col_quick1, col_quick2, col_quick3, col_quick4 = st.columns(4)
+            
+            with col_quick1:
+                if st.button("📅 Today", use_container_width=True):
+                    st.session_state.date_filter = 'today'
+            
+            with col_quick2:
+                if st.button("📆 Yesterday", use_container_width=True):
+                    st.session_state.date_filter = 'yesterday'
+            
+            with col_quick3:
+                if st.button("📊 Last 7 Days", use_container_width=True):
+                    st.session_state.date_filter = 'week'
+            
+            with col_quick4:
+                if st.button("📈 Last 30 Days", use_container_width=True):
+                    st.session_state.date_filter = 'month'
+            
+            st.markdown("---")
+            
+            # Date range selector
+            col_date1, col_date2 = st.columns(2)
+            
+            with col_date1:
+                # Get min and max dates from data
+                min_date = df['Date'].min().date() if not df.empty else datetime.now().date()
+                max_date = df['Date'].max().date() if not df.empty else datetime.now().date()
+                
+                start_date = st.date_input(
+                    "📅 From Date:",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    help="Select start date"
                 )
             
+            with col_date2:
+                end_date = st.date_input(
+                    "📅 To Date:",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    help="Select end date"
+                )
+            
+            # Apply quick filter presets
+            if 'date_filter' in st.session_state:
+                today = datetime.now().date()
+                
+                if st.session_state.date_filter == 'today':
+                    start_date = today
+                    end_date = today
+                elif st.session_state.date_filter == 'yesterday':
+                    yesterday = today - pd.Timedelta(days=1)
+                    start_date = yesterday
+                    end_date = yesterday
+                elif st.session_state.date_filter == 'week':
+                    start_date = today - pd.Timedelta(days=7)
+                    end_date = today
+                elif st.session_state.date_filter == 'month':
+                    start_date = today - pd.Timedelta(days=30)
+                    end_date = today
+                
+                # Clear the session state after applying
+                del st.session_state.date_filter
+            
+            # Apply date filter
+            df_filtered = df[
+                (df['Date'].dt.date >= start_date) & 
+                (df['Date'].dt.date <= end_date)
+            ]
+            
+            st.markdown("---")
+            
+            # Filter controls (Source filter + Stats)
+            col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+            
+            with col1:
+                if 'Source' in df_filtered.columns:
+                    sources = df_filtered['Source'].unique().tolist()
+                    source_filter = st.multiselect(
+                        "Filter by source:",
+                        options=sources,
+                        default=sources
+                    )
+                else:
+                    source_filter = []
+            
             with col2:
-                st.metric("Total Articles", len(df))
+                st.metric("📄 Articles", len(df_filtered))
             
-            # Filter dataframe
-            if source_filter:
-                df = df[df['Source'].isin(source_filter)]
+            with col3:
+                if 'Relevance_Score' in df_filtered.columns and not df_filtered['Relevance_Score'].isna().all():
+                    avg_score = df_filtered['Relevance_Score'].mean()
+                    st.metric("⭐ Avg Score", f"{avg_score:.1f}/10")
             
-            # Display news cards
-            if df.empty:
-                st.warning("No articles match your filters.")
+            with col4:
+                # Show date range
+                days_shown = (end_date - start_date).days + 1
+                st.metric("📅 Days", days_shown)
+            
+            # Apply source filter
+            if source_filter and 'Source' in df_filtered.columns:
+                df_filtered = df_filtered[df_filtered['Source'].isin(source_filter)]
+            
+            # Sort by date (newest first) and relevance
+            if 'Relevance_Score' in df_filtered.columns:
+                df_filtered = df_filtered.sort_values(
+                    ['Date', 'Relevance_Score'], 
+                    ascending=[False, False]
+                )
             else:
-                for idx, row in df.iterrows():
-                    display_news_card(row)
+                df_filtered = df_filtered.sort_values('Date', ascending=False)
+            
+            # Show date breakdown
+            if len(df_filtered) > 0:
+                with st.expander("📊 Articles by Date (Click to expand)"):
+                    date_counts = df_filtered.groupby(df_filtered['Date'].dt.date).size().reset_index()
+                    date_counts.columns = ['Date', 'Count']
+                    date_counts = date_counts.sort_values('Date', ascending=False)
+                    
+                    # Display as a nice table
+                    for _, row in date_counts.iterrows():
+                        col_a, col_b = st.columns([3, 1])
+                        with col_a:
+                            st.text(f"📅 {row['Date'].strftime('%B %d, %Y (%A)')}")
+                        with col_b:
+                            st.text(f"📄 {row['Count']} articles")
+            
+            st.markdown("---")
+            
+            # Display articles
+            if df_filtered.empty:
+                st.warning(f"📭 No articles found between {start_date.strftime('%B %d, %Y')} and {end_date.strftime('%B %d, %Y')}")
+                st.info("💡 Try expanding the date range or adjusting your filters.")
+            else:
+                st.success(f"📚 Showing {len(df_filtered)} articles from {start_date.strftime('%b %d')} to {end_date.strftime('%b %d, %Y')}")
+                
+                # Group by date for better organization
+                for date in df_filtered['Date'].dt.date.unique():
+                    date_articles = df_filtered[df_filtered['Date'].dt.date == date]
+                    
+                    # Date header
+                    st.markdown(f"## 📅 {date.strftime('%B %d, %Y (%A)')}")
+                    st.caption(f"{len(date_articles)} articles")
+                    
+                    # Display articles for this date
+                    for idx, row in date_articles.iterrows():
+                        display_news_card(row, idx)
+                    
+                    st.markdown("---")
     
     with tab2:
-        st.header("💬 Ask Questions About the News")
+        st.header("💬 Ask AI About the News")
+        st.markdown("*Powered by Google Gemini (Premium)*")
         
         # Load news for context
         df = load_news_from_sheet()
         
         if df.empty:
-            st.info("No articles loaded yet. Fetch some news first!")
+            st.info("📚 No articles loaded yet.\n\nFetch some news first to ask questions!")
         else:
-            # Create context from all summaries
+            # Create context from summaries
             context = "\n\n".join([
-                f"Article: {row['Title']}\nSummary: {row['Summary']}"
+                f"**{row['Title']}**\n{row['Summary']}"
                 for _, row in df.iterrows()
             ])
             
             # Chat interface
-            user_question = st.text_input(
-                "Ask me anything about today's news:",
-                placeholder="E.g., What are the key economic developments today?"
+            st.markdown("### 🗨️ Your Question")
+            user_question = st.text_area(
+                "Ask anything about today's current affairs:",
+                placeholder="Example: What are the key government policies mentioned today?\n\nOr: Explain the economic implications of today's news.",
+                height=100
             )
             
-            if user_question:
-                with st.spinner("Thinking..."):
-                    prompt = f"""
-                    You are an expert UPSC/SSC tutor. Based on today's news articles, answer this question:
-                    
-                    Question: {user_question}
-                    
-                    Context (Today's News):
-                    {context[:3000]}
-                    
-                    Provide a clear, exam-focused answer. If the answer isn't in today's news, say so and provide general knowledge if relevant.
-                    """
-                    
-                    try:
-                        response = st.session_state.model.generate_content(prompt)
-                        st.markdown("### 🤖 Answer:")
-                        st.markdown(response.text)
-                    except Exception as e:
-                        st.error(f"Could not generate answer: {e}")
+            if st.button("🚀 Get Answer", type="primary"):
+                if not user_question.strip():
+                    st.warning("Please enter a question first!")
+                else:
+                    with st.spinner("🤖 Gemini AI thinking..."):
+                        prompt = f"""You are an expert UPSC/SSC tutor. Answer this question based on today's current affairs:
+
+**Question:** {user_question}
+
+**Today's News Context:**
+{context[:5000]}
+
+Provide a clear, exam-focused answer. If the question relates to current affairs, use the context above. If it's a general knowledge question, provide accurate information and relate it to exam preparation where possible."""
+                        
+                        try:
+                            response = st.session_state.premium_model.generate_content(prompt)
+                            
+                            st.markdown("---")
+                            st.markdown("### 🤖 AI Answer:")
+                            st.markdown(response.text)
+                            st.caption("✨ Powered by Google Gemini (Premium AI)")
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error generating response: {e}")
+                            st.info("💡 Try rephrasing your question or check your Gemini API key.")
 
 # ============================================
 # 🚀 RUN THE APP
